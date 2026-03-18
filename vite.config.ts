@@ -1,13 +1,26 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import { writeFileSync, mkdirSync } from 'fs'
+
+/** Recreate dist/.gitkeep after Vite clears the output directory */
+function gitkeepPlugin(): Plugin {
+  return {
+    name: 'gitkeep',
+    writeBundle() {
+      const distDir = path.resolve(__dirname, 'dist')
+      mkdirSync(distDir, { recursive: true })
+      writeFileSync(path.join(distDir, '.gitkeep'), '')
+    },
+  }
+}
 
 const host = process.env.TAURI_DEV_HOST
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), gitkeepPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
