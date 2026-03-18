@@ -18,6 +18,7 @@ import {
   type ExecutionMode,
   type SessionDigest,
   type LabelData,
+  type ClaudeCommand,
   EXECUTION_MODE_CYCLE,
   isExitPlanMode,
 } from '@/types/chat'
@@ -111,6 +112,9 @@ interface ChatUIState {
 
   // Draft input per session (preserves text when switching tabs)
   inputDrafts: Record<string, string>
+
+  // Pending slash command per session (set when user selects from popover, resolved on submit)
+  pendingCommands: Record<string, ClaudeCommand>
 
   // Execution mode per session (defaults to 'plan' for new sessions)
   executionModes: Record<string, ExecutionMode>
@@ -332,6 +336,9 @@ interface ChatUIState {
   // Actions - Input drafts (session-based)
   setInputDraft: (sessionId: string, value: string) => void
   clearInputDraft: (sessionId: string) => void
+
+  // Actions - Pending command (session-based)
+  setPendingCommand: (sessionId: string, command: ClaudeCommand | null) => void
 
   // Actions - Execution mode (session-based)
   cycleExecutionMode: (sessionId: string) => void
@@ -570,6 +577,7 @@ export const useChatStore = create<ChatUIState>()(
       streamingContentBlocks: {},
       streamingThinkingContent: {},
       inputDrafts: {},
+      pendingCommands: {},
       executionModes: {},
       thinkingLevels: {},
       effortLevels: {},
@@ -1226,6 +1234,21 @@ export const useChatStore = create<ChatUIState>()(
           },
           undefined,
           'clearInputDraft'
+        ),
+
+      setPendingCommand: (sessionId, command) =>
+        set(
+          state => {
+            if (command === null) {
+              if (!(sessionId in state.pendingCommands)) return state
+              const { [sessionId]: _, ...rest } = state.pendingCommands
+              return { pendingCommands: rest }
+            }
+            if (state.pendingCommands[sessionId]?.path === command.path) return state
+            return { pendingCommands: { ...state.pendingCommands, [sessionId]: command } }
+          },
+          undefined,
+          'setPendingCommand'
         ),
 
       // Execution mode (session-based)

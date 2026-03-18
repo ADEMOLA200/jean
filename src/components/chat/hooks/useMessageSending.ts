@@ -7,12 +7,14 @@ import { buildMcpConfigJson } from '@/services/mcp'
 import { DEFAULT_PARALLEL_EXECUTION_PROMPT } from '@/types/preferences'
 import type {
   QueuedMessage,
+  ResolvedCommand,
   ExecutionMode,
   ThinkingLevel,
   EffortLevel,
   McpServerInfo,
   Session,
 } from '@/types/chat'
+import { invoke } from '@/lib/transport'
 import type { QueryClient } from '@tanstack/react-query'
 import { GIT_ALLOWED_TOOLS } from './useMessageHandlers'
 
@@ -335,6 +337,8 @@ export function useMessageSending({
 
       const {
         inputDrafts,
+        pendingCommands,
+        setPendingCommand,
         getPendingImages,
         clearPendingImages,
         getPendingFiles,
@@ -351,6 +355,7 @@ export function useMessageSending({
       const textMessage = (
         liveInputValue ?? inputDrafts[activeSessionId ?? ''] ?? ''
       ).trim()
+      const pendingCommand = activeSessionId ? pendingCommands[activeSessionId] : undefined
       const images = getPendingImages(activeSessionId ?? '')
       const files = getPendingFiles(activeSessionId ?? '')
       const skills = getPendingSkills(activeSessionId ?? '')
@@ -358,6 +363,7 @@ export function useMessageSending({
 
       if (
         !textMessage &&
+        !pendingCommand &&
         images.length === 0 &&
         files.length === 0 &&
         textFiles.length === 0 &&
@@ -377,8 +383,6 @@ export function useMessageSending({
         )
         return
       }
-
-      const message = textMessage
 
       if (
         images.length > 0 ||
@@ -408,6 +412,85 @@ export function useMessageSending({
         useChatStore.getState()
       setQuestionsSkipped(activeSessionId, false)
       setWaitingForInput(activeSessionId, false)
+
+      // If there's a pending command, resolve it asynchronously then send
+      if (pendingCommand) {
+        setPendingCommand(activeSessionId, null)
+
+        // Extract user args: strip /commandname prefix
+        const prefix = `/${pendingCommand.name}`
+        const userArgs = textMessage.startsWith(prefix)
+          ? textMessage.slice(prefix.length).trim()
+          : textMessage
+
+        const toastId = toast.loading(`Resolving /${pendingCommand.name}...`)
+
+        void (async () => {
+          try {
+            const resolved = await invoke<ResolvedCommand>(
+              'resolve_claude_command',
+              {
+                commandPath: pendingCommand.path,
+                workingDir: activeWorktreePath,
+              }
+            )
+
+            const resolvedMessage = userArgs
+              ? `${resolved.content}\n\nArguments are: ${userArgs}`
+              : resolved.content
+
+            const mode = executionModeRef.current
+            const thinkingLvl = selectedThinkingLevelRef.current
+            const queuedMessage: QueuedMessage = {
+              id: generateId(),
+              message: resolvedMessage,
+              pendingImages: images,
+              pendingFiles: files,
+              pendingSkills: skills,
+              pendingTextFiles: textFiles,
+              model: selectedModelRef.current,
+              provider: selectedProviderRef.current,
+              executionMode: mode,
+              thinkingLevel: thinkingLvl,
+              effortLevel:
+                useAdaptiveThinkingRef.current || isCodexBackendRef.current
+                  ? selectedEffortLevelRef.current
+                  : undefined,
+              mcpConfig: buildMcpConfigJson(
+                mcpServersDataRef.current ?? [],
+                enabledMcpServersRef.current,
+                selectedBackendRef.current
+              ),
+              commandAllowedTools: resolved.allowed_tools,
+              backend:
+                selectedBackendRef.current !== 'claude'
+                  ? selectedBackendRef.current
+                  : undefined,
+              queuedAt: Date.now(),
+            }
+
+            toast.dismiss(toastId)
+            markAtBottom()
+
+            const { isSending: recheckSending, enqueueMessage: reEnqueue } =
+              useChatStore.getState()
+            if (recheckSending(activeSessionId)) {
+              reEnqueue(activeSessionId, queuedMessage)
+              persistEnqueue(activeWorktreeId, activeWorktreePath, activeSessionId, queuedMessage)
+            } else {
+              sendMessageNow(queuedMessage)
+            }
+          } catch (error) {
+            toast.error(
+              `Failed to resolve /${pendingCommand.name}: ${error instanceof Error ? error.message : String(error)}`,
+              { id: toastId }
+            )
+          }
+        })()
+        return
+      }
+
+      const message = textMessage
 
       const mode = executionModeRef.current
       const thinkingLvl = selectedThinkingLevelRef.current

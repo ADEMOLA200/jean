@@ -1497,7 +1497,6 @@ export function ChatWindow({
   // Message sending pipeline: resolveCustomProfile, sendMessageNow, handleSubmit, git diff handlers
   const {
     resolveCustomProfile,
-    sendMessageNow,
     handleSubmit,
     handleCancel,
     handleGitDiffAddToPrompt,
@@ -1910,31 +1909,17 @@ export function ChatWindow({
     else if (pendingPlanMessage) handleWorktreeYoloApproval(pendingPlanMessage.id)
   }, [hasStreamingPlan, handleStreamingWorktreeYoloApproval, pendingPlanMessage, handleWorktreeYoloApproval])
 
-  // Pending attachment removal, slash command execution, queue management
+  // Pending attachment removal, queue management
   const {
     handleRemovePendingImage,
     handleRemovePendingTextFile,
     handleRemovePendingSkill,
     handleRemovePendingFile,
-    handleCommandExecute,
     handleRemoveQueuedMessage,
     handleForceSendQueued,
   } = usePendingAttachments({
     activeSessionId,
-    activeWorktreeId,
-    activeWorktreePath,
-    selectedModelRef,
-    selectedProviderRef,
-    executionModeRef,
-    selectedThinkingLevelRef,
-    selectedEffortLevelRef,
-    useAdaptiveThinkingRef,
-    isCodexBackendRef,
-    mcpServersDataRef,
-    enabledMcpServersRef,
-    selectedBackendRef,
     setInputDraft,
-    sendMessageNow,
   })
 
   // Pre-calculate last plan message index for approve button logic
@@ -2384,7 +2369,6 @@ export function ChatWindow({
                                 onSubmit={handleSubmit}
                                 onCancel={handleCancel}
                                 onSwitchBackendWithTab={handleTabBackendSwitch}
-                                onCommandExecute={handleCommandExecute}
                                 onHasValueChange={setHasInputValue}
                                 onRegisterClearHandler={(
                                   handler: (() => void) | null

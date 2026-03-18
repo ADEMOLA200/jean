@@ -22,6 +22,7 @@ import {
 } from './FileMentionPopover'
 import { queryClient } from '@/lib/query-client'
 import { fileQueryKeys } from '@/services/files'
+import { skillQueryKeys } from '@/services/skills'
 import type { WorktreeFile } from '@/types/chat'
 import { SlashPopover, type SlashPopoverHandle } from './SlashPopover'
 
@@ -43,7 +44,6 @@ interface ChatInputProps {
   onSubmit: (e: React.FormEvent) => void
   onCancel: () => void
   onSwitchBackendWithTab?: () => void
-  onCommandExecute?: (command: ClaudeCommand) => void
   onHasValueChange?: (hasValue: boolean) => void
   onRegisterClearHandler?: (clearHandler: (() => void) | null) => void
   formRef: React.RefObject<HTMLFormElement | null>
@@ -60,7 +60,6 @@ export const ChatInput = memo(function ChatInput({
   onSubmit,
   onCancel,
   onSwitchBackendWithTab,
-  onCommandExecute,
   onHasValueChange,
   onRegisterClearHandler,
   formRef,
@@ -187,7 +186,11 @@ export const ChatInput = memo(function ChatInput({
     valueRef.current = ''
     setShowHint(true)
     onHasValueChangeRef.current?.(false)
-  }, [inputRef])
+    // Clear any pending command for the active session
+    if (activeSessionId) {
+      useChatStore.getState().setPendingCommand(activeSessionId, null)
+    }
+  }, [inputRef, activeSessionId])
 
   useEffect(() => {
     onRegisterClearHandler?.(clearInputState)
@@ -214,6 +217,13 @@ export const ChatInput = memo(function ChatInput({
       setShowHint(prev => (prev !== isEmpty ? isEmpty : prev))
       // Notify parent of hasValue change for send button styling
       onHasValueChangeRef.current?.(!isEmpty)
+
+      // Clear pending command if input no longer starts with /commandname
+      const { pendingCommands, setPendingCommand } = useChatStore.getState()
+      const pendingCmd = pendingCommands[activeSessionId]
+      if (pendingCmd && !value.startsWith(`/${pendingCmd.name}`)) {
+        setPendingCommand(activeSessionId, null)
+      }
 
       // Sync pending files with @mentions in input
       // Remove any pending files whose @filename is no longer in the text
@@ -323,6 +333,20 @@ export const ChatInput = memo(function ChatInput({
             query.includes('\n') ||
             cursorPos <= slashTriggerIndex
           ) {
+            // If closing due to space, check if the query (before space) exactly matches a command
+            // Auto-set pending command so the user can type args after the command name
+            if (query.includes(' ') && activeSessionId) {
+              const commandName = query.split(' ')[0]
+              if (commandName) {
+                const commands = queryClient.getQueryData<ClaudeCommand[]>(
+                  skillQueryKeys.commands(activeWorktreePath)
+                )
+                const matched = commands?.find(c => c.name === commandName)
+                if (matched) {
+                  useChatStore.getState().setPendingCommand(activeSessionId, matched)
+                }
+              }
+            }
             setSlashPopoverOpen(false)
             setSlashTriggerIndex(null)
             setSlashQuery('')
@@ -896,31 +920,41 @@ export const ChatInput = memo(function ChatInput({
     [activeSessionId, slashTriggerIndex, inputRef]
   )
 
-  // Handle command selection from / mention popover (executes immediately)
+  // Handle command selection from / mention popover (inserts into input for user to add args)
   const handleCommandSelect = useCallback(
     (command: ClaudeCommand) => {
+      if (!activeSessionId) return
+
       // Cancel pending debounced save (it still has the old "/command" value)
       clearTimeout(debouncedSaveRef.current)
 
-      // Clear input
+      // Store the pending command in the store
+      useChatStore.getState().setPendingCommand(activeSessionId, command)
+
+      // Replace input with /commandname + trailing space for args
+      const newValue = `/${command.name} `
       if (inputRef.current) {
-        inputRef.current.value = ''
-        valueRef.current = ''
+        inputRef.current.value = newValue
+        valueRef.current = newValue
+        // Place cursor at end
+        requestAnimationFrame(() => {
+          const pos = newValue.length
+          inputRef.current?.setSelectionRange(pos, pos)
+        })
       }
-      if (activeSessionId) {
-        useChatStore.getState().setInputDraft(activeSessionId, '')
-      }
+      useChatStore.getState().setInputDraft(activeSessionId, newValue)
+      onHasValueChangeRef.current?.(true)
 
       // Reset slash popover state
       setSlashPopoverOpen(false)
       setSlashTriggerIndex(null)
       setSlashQuery('')
-      setShowHint(true)
+      setShowHint(false)
 
-      // Notify parent to execute command
-      onCommandExecute?.(command)
+      // Refocus input
+      inputRef.current?.focus()
     },
-    [activeSessionId, inputRef, onCommandExecute]
+    [activeSessionId, inputRef]
   )
 
   // Determine if slash is at prompt start (for enabling commands)
